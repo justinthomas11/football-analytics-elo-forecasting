@@ -4,13 +4,23 @@ from pydantic import BaseModel
 app = FastAPI()
 
 class MatchInput(BaseModel):
-  home_team:str
-  odd_home:float
-  odd_away:float
+    EloDiff: float
+    AbsEloDiff: float
+    Form3Diff: float
+    AbsForm5Diff: float
+    ShotDiff: float
+    AbsShotDiff: float
+    TargetDiff: float
+    CornerDiff: float
+    CardDiff: float
+    LowScoringBias: float
+    OddHome: float
+    OddDraw: float
+    OddAway: float
 
-@app.get("/team/{team_name}")
-def get_team(team_name:str):
-  return {"Team":team_name}
+@app.get("/")
+def root():
+    return {"message": "Football Predictor API is running"}
 
 @app.get("/odds")
 def get_odds(home:float, away:float):
@@ -20,6 +30,6 @@ def get_odds(home:float, away:float):
 @app.post("/predict")
 def predict_match(data:MatchInput):
   return {
-    "received":data.home_team,
-    "odd difference":data.odd_home-data.odd_away
+    "received":data.model_dump()
+    
   }
