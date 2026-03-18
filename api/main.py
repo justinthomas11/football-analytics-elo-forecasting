@@ -1,5 +1,11 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+import pickle
+import pandas as pd
+from contextlib import asynccontextmanager
+
+
+from fastapi import FastAPI, HTTPException
+#We removed Pydantic import as the Pydantic models now live in models.py
+from api.models import MatchInput, PredictionOutput
 
 app = FastAPI()
 
