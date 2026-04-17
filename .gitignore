@@ -1,30 +1,26 @@
 # Python
 __pycache__/
 *.pyc
+*.pyo
 
 # Jupyter
 .ipynb_checkpoints/
 
-# Data
-*.csv
+# Data (large files)
 *.xlsx
+Data/Football_Tableau.csv
 
-# Environment
+# Environment — never commit API keys
 .env
 
 # OS
 .DS_Store
 Thumbs.db
 
-#Dataset
-Data/Football_Tableau.csv
-
+# MLflow
 mlruns/
 *.db
 
-# FootballIQ model artefacts (large pickle files)
-footballiq/models/*.pkl
-
-# FootballIQ env
-footballiq/.env
+# FootballIQ — trained model artefacts (large pickle files)
+models/*.pkl
 
