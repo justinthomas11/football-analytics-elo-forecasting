@@ -136,7 +136,7 @@ def run_prediction(
     rf_weight: float = RF_WEIGHT,
     elo_weight: float = ELO_WEIGHT,
     use_llm: bool = True,
-    use_fbref: bool = False,
+    use_live_data: bool = False,
 ) -> dict:
     """
     Full FootballIQ prediction pipeline.
@@ -167,7 +167,7 @@ def run_prediction(
 
     # Step 2 — Scrape context
     logger.info(f"Scraping context for {home_team} vs {away_team} …")
-    context = scrape_prematch_context(home_team, away_team, use_fbref=use_fbref)
+    context = scrape_prematch_context(home_team, away_team, use_live_data=use_live_data)
 
     # Step 3 — Build feature row
     feat_row = _build_row(

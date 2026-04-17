@@ -235,8 +235,8 @@ def main():
     with ac1:
         rf_w = st.slider("XGB Model weight", 0.0, 1.0, 0.60, 0.05)
     with ac2:
-        use_fbref = st.toggle("🌐 Try FBref live scrape", value=False,
-                              help="Falls back to historical CSV if blocked")
+        use_live_data = st.toggle("🌐 Try Sofascore live scrape", value=False,
+                              help="Falls back to historical CSV if scraping fails")
     elo_w = round(1.0 - rf_w, 2)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -262,7 +262,7 @@ def main():
                 home_team=home_t, away_team=away_t,
                 match_date=str(m_date),
                 rf_weight=rf_w, elo_weight=elo_w,
-                use_llm=True, use_fbref=use_fbref,
+                use_llm=True, use_live_data=use_live_data,
             )
             log_prediction(result)
         except FileNotFoundError as e:

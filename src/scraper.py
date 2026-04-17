@@ -18,6 +18,7 @@ Returned dict keys:
 import time
 import random
 import logging
+import urllib.parse
 from pathlib import Path
 from typing import Optional
 
@@ -157,53 +158,65 @@ def _historical_h2h(home_team: str, away_team: str, n: int = 5) -> dict:
     return {"home_wins": hw, "away_wins": aw, "draws": dr, "matches": lst}
 
 
-# ── FBref scraper ─────────────────────────────────────────────────────────────
+# ── Sofascore scraper ─────────────────────────────────────────────────────────
 
-def _fbref_team_url(team: str) -> Optional[str]:
-    resp = _polite_get(FBREF_SEARCH.format(team=team.replace(" ", "+")))
+def _sofascore_team_id(team: str) -> Optional[int]:
+    """Search Sofascore to get the internal team ID."""
+    url = f"https://api.sofascore.com/api/v1/search/all?q={urllib.parse.quote(team)}"
+    resp = _polite_get(url)
     if not resp:
         return None
-    soup = BeautifulSoup(resp.text, "html.parser")
-    for item in soup.select(".search-item-name a"):
-        href = item.get("href", "")
-        if "/squads/" in href:
-            return "https://fbref.com" + href
+    try:
+        data = resp.json()
+        for item in data.get("results", []):
+            if item.get("type") == "team" and item.get("entity", {}).get("sport", {}).get("name") == "Football":
+                return item["entity"]["id"]
+    except Exception as exc:
+        logger.warning(f"Error parsing Sofascore team ID for {team}: {exc}")
     return None
 
-
-def _fbref_form(team_url: str, n: int = 5) -> dict:
-    scores_url = team_url.rstrip("/") + "/matchlogs/all_comps/schedule/"
-    resp = _polite_get(scores_url)
+def _sofascore_form(team_id: int, n: int = 5) -> dict:
+    """Fetch the latest events for the team and calculate form."""
+    url = f"https://api.sofascore.com/api/v1/team/{team_id}/events/last/0"
+    resp = _polite_get(url)
     if not resp:
         return {"form": [], "goals_avg": None, "conceded_avg": None}
+    
+    try:
+        data = resp.json()
+        events = [e for e in data.get("events", []) if e.get("status", {}).get("type") == "finished"]
+        # Sort chronologically (oldest to newest in the requested batch)
+        events.sort(key=lambda x: x.get("startTimestamp", 0))
+        # Keep only the last n matches
+        played = events[-n:]
 
-    soup  = BeautifulSoup(resp.text, "html.parser")
-    table = soup.find("table", id=lambda x: x and "matchlogs" in x.lower()) \
-            or soup.find("table")
-    if not table or not table.find("tbody"):
+        results, goals, conceded = [], [], []
+        for e in played:
+            is_home = (e.get("homeTeam", {}).get("id") == team_id)
+            home_score = e.get("homeScore", {}).get("current", 0)
+            away_score = e.get("awayScore", {}).get("current", 0)
+            
+            gf = home_score if is_home else away_score
+            ga = away_score if is_home else home_score
+            
+            goals.append(gf)
+            conceded.append(ga)
+            
+            if gf > ga:
+                results.append("W")
+            elif gf == ga:
+                results.append("D")
+            else:
+                results.append("L")
+                
+        return {
+            "form":         results,
+            "goals_avg":    round(sum(goals) / len(goals), 2) if goals else None,
+            "conceded_avg": round(sum(conceded) / len(conceded), 2) if conceded else None,
+        }
+    except Exception as exc:
+        logger.warning(f"Error parsing Sofascore form for ID {team_id}: {exc}")
         return {"form": [], "goals_avg": None, "conceded_avg": None}
-
-    played = []
-    for row in table.find("tbody").find_all("tr"):
-        r = row.find("td", {"data-stat": "result"})
-        if r and r.text.strip() in ("W", "D", "L"):
-            played.append(row)
-    played = played[-n:]
-
-    results, goals, conceded = [], [], []
-    for row in played:
-        r  = row.find("td", {"data-stat": "result"})
-        gf = row.find("td", {"data-stat": "goals_for"})
-        ga = row.find("td", {"data-stat": "goals_against"})
-        if r:  results.append(r.text.strip())
-        if gf and gf.text.strip().isdigit(): goals.append(int(gf.text.strip()))
-        if ga and ga.text.strip().isdigit(): conceded.append(int(ga.text.strip()))
-
-    return {
-        "form":         results,
-        "goals_avg":    round(sum(goals)    / len(goals),    2) if goals    else None,
-        "conceded_avg": round(sum(conceded) / len(conceded), 2) if conceded else None,
-    }
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -211,35 +224,35 @@ def _fbref_form(team_url: str, n: int = 5) -> dict:
 def scrape_prematch_context(
     home_team: str,
     away_team: str,
-    use_fbref: bool = True,
+    use_live_data: bool = True,
 ) -> dict:
     """
-    Fetch pre-match context. Attempts FBref first; falls back to Matches.csv.
+    Fetch pre-match context. Attempts Sofascore first; falls back to Matches.csv.
     Never raises — always returns a dict (may contain empty lists / None values).
     """
     source    = "historical"
     home_data = {"form": [], "goals_avg": None, "conceded_avg": None}
     away_data = {"form": [], "goals_avg": None, "conceded_avg": None}
 
-    if use_fbref:
+    if use_live_data:
         for team, store in [(home_team, "home"), (away_team, "away")]:
             try:
-                url = _fbref_team_url(team)
-                if url:
-                    data = _fbref_form(url)
+                t_id = _sofascore_team_id(team)
+                if t_id:
+                    data = _sofascore_form(t_id)
                     if data["form"]:
                         if store == "home": home_data = data
                         else:              away_data = data
-                        source = "fbref"
+                        source = "sofascore"
             except Exception as exc:
-                logger.warning(f"FBref failed for {team}: {exc}")
+                logger.warning(f"Sofascore failed for {team}: {exc}")
 
     if not home_data["form"]:
         home_data = _historical_form(home_team)
     if not away_data["form"]:
         away_data = _historical_form(away_team)
     if home_data["form"] or away_data["form"]:
-        source = source if source == "fbref" else "historical"
+        source = source if source == "sofascore" else "historical"
 
     h2h = _historical_h2h(home_team, away_team)
 
