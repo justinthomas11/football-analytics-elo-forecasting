@@ -39,7 +39,11 @@ HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/120.0.0.0 Safari/537.36"
     ),
+    "Accept": "*/*",
     "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.sofascore.com/",
+    "Origin": "https://www.sofascore.com",
+    "Cache-Control": "no-cache",
 }
 FBREF_SEARCH = "https://fbref.com/search/search.fcgi?search={team}"
 

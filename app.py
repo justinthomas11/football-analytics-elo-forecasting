@@ -198,8 +198,8 @@ def conf_cls(c: str) -> str:
     return {"high": "conf-high", "medium": "conf-medium", "low": "conf-low"}.get(c.lower(), "conf-low")
 
 def src_badge(s: str) -> str:
-    cls = "src-fbref" if s == "fbref" else "src-historical"
-    return f"<span class='source-tag {cls}'>{s}</span>"
+    cls = "src-fbref" if s in ["fbref", "sofascore"] else "src-historical"
+    return f"<span class='source-tag {cls}'>{s.upper()}</span>"
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
