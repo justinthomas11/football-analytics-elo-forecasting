@@ -23,6 +23,7 @@ from typing import Optional
 
 import pandas as pd
 import requests
+import cloudscraper
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
@@ -44,11 +45,13 @@ FBREF_SEARCH = "https://fbref.com/search/search.fcgi?search={team}"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+_scraper = cloudscraper.create_scraper()
+
 def _polite_get(url: str, retries: int = 3, delay: float = 2.0) -> Optional[requests.Response]:
     for attempt in range(retries):
         try:
             time.sleep(delay + random.uniform(0.5, 1.5))
-            resp = requests.get(url, headers=HEADERS, timeout=15)
+            resp = _scraper.get(url, headers=HEADERS, timeout=15)
             if resp.status_code == 429:
                 wait = int(resp.headers.get("Retry-After", 30))
                 logger.warning(f"Rate-limited — waiting {wait}s")
