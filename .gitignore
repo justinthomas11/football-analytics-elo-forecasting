@@ -22,3 +22,9 @@ Data/Football_Tableau.csv
 mlruns/
 *.db
 
+# FootballIQ model artefacts (large pickle files)
+footballiq/models/*.pkl
+
+# FootballIQ env
+footballiq/.env
+
