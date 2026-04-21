@@ -114,8 +114,8 @@ div[data-testid="stButton"] > button:hover {
     transform: translateY(-1px); box-shadow: 0 6px 20px rgba(99,102,241,0.35);
 }
 
-.stSelectbox label, .stDateInput label { color:#a0aec0 !important; font-size:0.82rem !important; }
-.stSelectbox > div > div, .stDateInput > div > div {
+.stSelectbox label { color:#a0aec0 !important; font-size:0.82rem !important; }
+.stSelectbox > div > div {
     background:#111827 !important; border:1px solid #2a3a5c !important;
     border-radius:8px !important; color:#e8eaf0 !important;
 }
@@ -126,6 +126,7 @@ div[data-testid="stButton"] > button:hover {
     text-transform:uppercase; margin-left:0.4rem;
 }
 .src-fbref      { background:#1a3a5c; color:#63b3ed; }
+.src-livescore  { background:#1a3a5c; color:#63b3ed; }
 .src-historical { background:#1a2d1a; color:#68d391; }
 </style>
 """, unsafe_allow_html=True)
@@ -198,7 +199,7 @@ def conf_cls(c: str) -> str:
     return {"high": "conf-high", "medium": "conf-medium", "low": "conf-low"}.get(c.lower(), "conf-low")
 
 def src_badge(s: str) -> str:
-    cls = "src-fbref" if s in ["fbref", "sofascore"] else "src-historical"
+    cls = "src-livescore" if s in ["livescore", "fbref", "sofascore"] else "src-historical"
     return f"<span class='source-tag {cls}'>{s.upper()}</span>"
 
 
@@ -221,22 +222,21 @@ def main():
     st.markdown("<div class='card'><div class='card-title'>📋 Match Setup</div>",
                 unsafe_allow_html=True)
 
-    c1, c2, c3 = st.columns([2, 2, 1.2])
+    c1, c2 = st.columns(2)
     with c1:
         idx_h   = teams.index("Arsenal") if "Arsenal" in teams else 0
         home_t  = st.selectbox("🏠 Home Team", teams, index=idx_h)
     with c2:
         idx_a   = (idx_h + 10) % len(teams)
         away_t  = st.selectbox("✈️ Away Team", teams, index=idx_a)
-    with c3:
-        m_date  = st.date_input("📅 Match Date", value=date.today())
+    m_date = date.today()
 
     ac1, ac2 = st.columns(2)
     with ac1:
         rf_w = st.slider("XGB Model weight", 0.0, 1.0, 0.60, 0.05)
     with ac2:
-        use_live_data = st.toggle("🌐 Try Sofascore live scrape", value=False,
-                              help="Falls back to historical CSV if scraping fails")
+        use_live_data = st.toggle("🌐 Try LiveScore API", value=False,
+                              help="Uses LiveScore RapidAPI for real-time form data. Falls back to historical CSV if unavailable.")
     elo_w = round(1.0 - rf_w, 2)
     st.markdown("</div>", unsafe_allow_html=True)
 

@@ -1,8 +1,13 @@
 """
 src/scraper.py — FootballIQ Live Data Scraper
 ==============================================
-Attempts to scrape pre-match context from FBref.com.
+Fetches pre-match context from the LiveScore API (via RapidAPI).
 Falls back gracefully to historical Matches.csv for form & H2H.
+
+LiveScore API flow:
+  1. v2/search  → resolve team name → team ID
+  2. matches/v2/list-by-date  → find a recent match Eid involving either team
+  3. matches/v2/get-pregame-form  → use match Eid to get recent form (EL array)
 
 Returned dict keys:
   home_form         list[str]   — up to 5 results e.g. ["W","W","D","L","W"]
@@ -12,20 +17,19 @@ Returned dict keys:
   away_goals_avg    float|None
   home_conceded_avg float|None
   away_conceded_avg float|None
-  source            str         — "fbref" | "historical"
+  source            str         — "livescore" | "historical"
 """
 
+import os
 import time
-import random
 import logging
-import urllib.parse
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 import requests
-import cloudscraper
-from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -33,43 +37,22 @@ logger = logging.getLogger(__name__)
 BASE_DIR    = Path(__file__).resolve().parent.parent   # project root
 MATCHES_CSV = BASE_DIR / "Data" / "Matches.csv"
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "Accept": "*/*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://www.sofascore.com/",
-    "Origin": "https://www.sofascore.com",
-    "Cache-Control": "no-cache",
+load_dotenv(BASE_DIR / ".env")
+
+# ── LiveScore RapidAPI config ─────────────────────────────────────────────────
+RAPIDAPI_KEY  = os.getenv("RAPIDAPI_KEY", "")
+RAPIDAPI_HOST = "livescore6.p.rapidapi.com"
+
+RAPIDAPI_HEADERS = {
+    "x-rapidapi-key":  RAPIDAPI_KEY,
+    "x-rapidapi-host": RAPIDAPI_HOST,
 }
-FBREF_SEARCH = "https://fbref.com/search/search.fcgi?search={team}"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-_scraper = cloudscraper.create_scraper()
-
-def _polite_get(url: str, retries: int = 3, delay: float = 2.0) -> Optional[requests.Response]:
-    for attempt in range(retries):
-        try:
-            time.sleep(delay + random.uniform(0.5, 1.5))
-            resp = _scraper.get(url, headers=HEADERS, timeout=15)
-            if resp.status_code == 429:
-                wait = int(resp.headers.get("Retry-After", 30))
-                logger.warning(f"Rate-limited — waiting {wait}s")
-                time.sleep(wait)
-                continue
-            resp.raise_for_status()
-            return resp
-        except Exception as exc:
-            logger.warning(f"[Attempt {attempt+1}] {url} → {exc}")
-    return None
-
-
 def _result_code(home_goals: float, away_goals: float, perspective: str) -> str:
+    """Return W/D/L from perspective of 'home' or 'away'."""
     if home_goals == away_goals:
         return "D"
     if perspective == "home":
@@ -77,7 +60,37 @@ def _result_code(home_goals: float, away_goals: float, perspective: str) -> str:
     return "W" if away_goals > home_goals else "L"
 
 
-# ── Historical CSV fallback ───────────────────────────────────────────────────
+def _api_get(endpoint: str, params: dict, retries: int = 2) -> Optional[dict]:
+    """Make a GET request to the LiveScore RapidAPI. Returns parsed JSON or None."""
+    if not RAPIDAPI_KEY:
+        logger.warning("RAPIDAPI_KEY not set — skipping LiveScore API call")
+        return None
+
+    url = f"https://{RAPIDAPI_HOST}/{endpoint}"
+    for attempt in range(retries):
+        try:
+            resp = requests.get(
+                url, headers=RAPIDAPI_HEADERS, params=params,
+                timeout=15, allow_redirects=False,
+            )
+            if resp.status_code == 429:
+                wait = int(resp.headers.get("Retry-After", 10))
+                logger.warning(f"Rate-limited — waiting {wait}s")
+                time.sleep(wait)
+                continue
+            if resp.status_code in (301, 302):
+                logger.warning(f"{endpoint} returned redirect ({resp.status_code})")
+                return None
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as exc:
+            logger.warning(f"[Attempt {attempt+1}] {url} → {exc}")
+    return None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Historical CSV fallback
+# ══════════════════════════════════════════════════════════════════════════════
 
 _matches_cache: Optional[pd.DataFrame] = None
 
@@ -143,87 +156,259 @@ def _historical_h2h(home_team: str, away_team: str, n: int = 5) -> dict:
     hw, aw, dr, lst = 0, 0, 0, []
     for _, row in h2h.iterrows():
         home_is_home = row["HomeTeam"].lower() == home_team.lower()
+        score = f"{int(row['FTHome'])}-{int(row['FTAway'])}"
         if row["FTHome"] == row["FTAway"]:
             dr += 1
-            score = f"{int(row['FTHome'])}-{int(row['FTAway'])}"
         elif row["FTHome"] > row["FTAway"]:
-            (hw if home_is_home else aw).__class__  # type annotation trick
             if home_is_home: hw += 1
             else: aw += 1
-            score = (f"{int(row['FTHome'])}-{int(row['FTAway'])}" if home_is_home
-                     else f"{int(row['FTAway'])}-{int(row['FTHome'])}")
         else:
             if home_is_home: aw += 1
             else: hw += 1
-            score = (f"{int(row['FTHome'])}-{int(row['FTAway'])}" if home_is_home
-                     else f"{int(row['FTAway'])}-{int(row['FTHome'])}")
         lst.append({"date": str(row["MatchDate"].date()), "score": score})
 
     return {"home_wins": hw, "away_wins": aw, "draws": dr, "matches": lst}
 
 
-# ── Sofascore scraper ─────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+#  LiveScore API integration
+# ══════════════════════════════════════════════════════════════════════════════
 
-def _sofascore_team_id(team: str) -> Optional[int]:
-    """Search Sofascore to get the internal team ID."""
-    url = f"https://api.sofascore.com/api/v1/search/all?q={urllib.parse.quote(team)}"
-    resp = _polite_get(url)
-    if not resp:
+_team_id_cache: dict = {}   # team_name_lower -> ID string
+
+
+def _livescore_search_team(team: str) -> Optional[str]:
+    """Search LiveScore for a team and return its ID string.
+
+    Response: {"Teams": [{"ID":"2773","Nm":"Arsenal","CoNm":"England",...}]}
+    """
+    key = team.lower()
+    if key in _team_id_cache:
+        return _team_id_cache[key]
+
+    data = _api_get("v2/search", {"Category": "soccer", "Query": team})
+    if not data or not isinstance(data, dict):
         return None
+
     try:
-        data = resp.json()
-        for item in data.get("results", []):
-            if item.get("type") == "team" and item.get("entity", {}).get("sport", {}).get("name") == "Football":
-                return item["entity"]["id"]
+        teams_list = data.get("Teams", [])
+        if not teams_list:
+            logger.warning(f"LiveScore: no teams for '{team}'. Keys: {list(data.keys())}")
+            return None
+
+        team_lower = team.lower()
+
+        # Pass 1: exact name match
+        for t in teams_list:
+            if t.get("Nm", "").lower() == team_lower:
+                tid = str(t["ID"])
+                _team_id_cache[key] = tid
+                logger.info(f"LiveScore: '{team}' → ID={tid} (exact)")
+                return tid
+
+        # Pass 2: partial match, prefer major leagues
+        major = {"England", "Spain", "Germany", "Italy", "France"}
+        for t in teams_list:
+            nm = t.get("Nm", "")
+            if team_lower in nm.lower() and t.get("CoNm") in major:
+                tid = str(t["ID"])
+                _team_id_cache[key] = tid
+                logger.info(f"LiveScore: '{team}' → ID={tid} (name='{nm}')")
+                return tid
+
+        # Pass 3: first result as fallback
+        first = teams_list[0]
+        tid = str(first["ID"])
+        _team_id_cache[key] = tid
+        logger.info(f"LiveScore: '{team}' → ID={tid} (fallback: '{first.get('Nm')}')")
+        return tid
+
     except Exception as exc:
-        logger.warning(f"Error parsing Sofascore team ID for {team}: {exc}")
+        logger.warning(f"Error parsing LiveScore search for '{team}': {exc}")
     return None
 
-def _sofascore_form(team_id: int, n: int = 5) -> dict:
-    """Fetch the latest events for the team and calculate form."""
-    url = f"https://api.sofascore.com/api/v1/team/{team_id}/events/last/0"
-    resp = _polite_get(url)
-    if not resp:
-        return {"form": [], "goals_avg": None, "conceded_avg": None}
-    
-    try:
-        data = resp.json()
-        events = [e for e in data.get("events", []) if e.get("status", {}).get("type") == "finished"]
-        # Sort chronologically (oldest to newest in the requested batch)
-        events.sort(key=lambda x: x.get("startTimestamp", 0))
-        # Keep only the last n matches
-        played = events[-n:]
 
-        results, goals, conceded = [], [], []
-        for e in played:
-            is_home = (e.get("homeTeam", {}).get("id") == team_id)
-            home_score = e.get("homeScore", {}).get("current", 0)
-            away_score = e.get("awayScore", {}).get("current", 0)
-            
-            gf = home_score if is_home else away_score
-            ga = away_score if is_home else home_score
-            
-            goals.append(gf)
-            conceded.append(ga)
-            
-            if gf > ga:
-                results.append("W")
-            elif gf == ga:
-                results.append("D")
-            else:
-                results.append("L")
-                
-        return {
-            "form":         results,
-            "goals_avg":    round(sum(goals) / len(goals), 2) if goals else None,
-            "conceded_avg": round(sum(conceded) / len(conceded), 2) if conceded else None,
-        }
-    except Exception as exc:
-        logger.warning(f"Error parsing Sofascore form for ID {team_id}: {exc}")
-        return {"form": [], "goals_avg": None, "conceded_avg": None}
+def _find_match_eid_for_team(team_id: str, days_back: int = 7) -> Optional[str]:
+    """Scan recent dates to find ANY match involving the team. Returns match Eid."""
+    today = datetime.utcnow().date()
+    for offset in range(days_back):
+        dt = today - timedelta(days=offset)
+        date_str = dt.strftime("%Y%m%d")
+
+        data = _api_get("matches/v2/list-by-date",
+                        {"Category": "soccer", "Date": date_str})
+        if not data or not isinstance(data, dict):
+            continue
+
+        for stage in data.get("Stages", []):
+            for evt in stage.get("Events", []):
+                # Check if team is T1 or T2
+                for side in ("T1", "T2"):
+                    team_list = evt.get(side, [])
+                    if isinstance(team_list, list):
+                        for t in team_list:
+                            if str(t.get("ID", "")) == team_id:
+                                eid = str(evt["Eid"])
+                                logger.info(
+                                    f"LiveScore: found match Eid={eid} for team "
+                                    f"ID={team_id} on {dt}"
+                                )
+                                return eid
+    return None
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
+def _parse_form_from_el(el_events: list, team_id: str, n: int = 5) -> dict:
+    """
+    Parse the EL (Event List) from get-pregame-form into W/D/L form.
+
+    Each EL event has:
+      T1: [{"ID":"2772","Nm":"Crystal Palace"}]
+      T2: [{"ID":"252","Nm":"West Ham United"}]
+      Tr1: "0"   (home goals)
+      Tr2: "0"   (away goals)
+      Eps: "FT"  (finished)
+    """
+    empty = {"form": [], "goals_avg": None, "conceded_avg": None}
+    results, goals_scored, goals_conceded = [], [], []
+
+    for evt in el_events[:n]:
+        # Get scores
+        try:
+            tr1 = int(evt.get("Tr1", -1))
+            tr2 = int(evt.get("Tr2", -1))
+        except (ValueError, TypeError):
+            continue
+        if tr1 < 0 or tr2 < 0:
+            continue
+
+        # Only count finished matches
+        eps = evt.get("Eps", "")
+        if isinstance(eps, str) and eps not in ("FT", "AET", "AP"):
+            continue
+
+        # Determine if our team is T1 (home) or T2 (away)
+        t1_list = evt.get("T1", [])
+        t1_id = str(t1_list[0].get("ID", "")) if isinstance(t1_list, list) and t1_list else ""
+
+        is_home = (t1_id == team_id)
+
+        perspective = "home" if is_home else "away"
+        results.append(_result_code(tr1, tr2, perspective))
+
+        gf = tr1 if is_home else tr2
+        ga = tr2 if is_home else tr1
+        goals_scored.append(gf)
+        goals_conceded.append(ga)
+
+    if not results:
+        return empty
+
+    return {
+        "form":         results,
+        "goals_avg":    round(sum(goals_scored)   / len(goals_scored),   2),
+        "conceded_avg": round(sum(goals_conceded) / len(goals_conceded), 2),
+    }
+
+
+def _livescore_form_via_pregame(
+    home_team_id: str,
+    away_team_id: str,
+    n: int = 5,
+) -> tuple[dict, dict]:
+    """
+    Try to get form for both teams using matches/v2/get-pregame-form.
+
+    Steps:
+      1. Find a recent match involving either team (via list-by-date)
+      2. Call get-pregame-form with that match Eid
+      3. Parse T1[0].EL and T2[0].EL for form data
+
+    Returns (home_form_dict, away_form_dict).
+    """
+    empty = {"form": [], "goals_avg": None, "conceded_avg": None}
+
+    # Step 1: find a match Eid for either team
+    match_eid = _find_match_eid_for_team(home_team_id, days_back=4)
+    if not match_eid:
+        match_eid = _find_match_eid_for_team(away_team_id, days_back=4)
+    if not match_eid:
+        logger.warning("LiveScore: no recent match found for either team")
+        return empty, empty
+
+    # Step 2: get pregame form
+    data = _api_get("matches/v2/get-pregame-form", {
+        "Category": "soccer",
+        "Eid": match_eid,
+    })
+    if not data or not isinstance(data, dict):
+        return empty, empty
+
+    # Step 3: parse T1 and T2 form data
+    home_data, away_data = empty.copy(), empty.copy()
+
+    for side_key in ("T1", "T2"):
+        side_list = data.get(side_key, [])
+        if not isinstance(side_list, list) or not side_list:
+            continue
+
+        team_obj = side_list[0]
+        tid = str(team_obj.get("ID", ""))
+        el_events = team_obj.get("EL", [])
+
+        if not el_events:
+            continue
+
+        form_data = _parse_form_from_el(el_events, tid, n)
+
+        if tid == home_team_id:
+            home_data = form_data
+        elif tid == away_team_id:
+            away_data = form_data
+
+    # If we only found form for one team (the other wasn't in this match),
+    # try finding a separate match for the missing team
+    if not home_data["form"] and home_team_id:
+        home_data = _fallback_form_via_dates(home_team_id, n)
+    if not away_data["form"] and away_team_id:
+        away_data = _fallback_form_via_dates(away_team_id, n)
+
+    return home_data, away_data
+
+
+def _fallback_form_via_dates(team_id: str, n: int = 5) -> dict:
+    """
+    Fallback: find a match for this specific team and use get-pregame-form.
+    """
+    empty = {"form": [], "goals_avg": None, "conceded_avg": None}
+
+    match_eid = _find_match_eid_for_team(team_id, days_back=7)
+    if not match_eid:
+        return empty
+
+    data = _api_get("matches/v2/get-pregame-form", {
+        "Category": "soccer",
+        "Eid": match_eid,
+    })
+    if not data or not isinstance(data, dict):
+        return empty
+
+    for side_key in ("T1", "T2"):
+        side_list = data.get(side_key, [])
+        if not isinstance(side_list, list) or not side_list:
+            continue
+        team_obj = side_list[0]
+        tid = str(team_obj.get("ID", ""))
+        if tid == team_id:
+            el_events = team_obj.get("EL", [])
+            if el_events:
+                return _parse_form_from_el(el_events, tid, n)
+
+    return empty
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Public API
+# ══════════════════════════════════════════════════════════════════════════════
 
 def scrape_prematch_context(
     home_team: str,
@@ -231,32 +416,42 @@ def scrape_prematch_context(
     use_live_data: bool = True,
 ) -> dict:
     """
-    Fetch pre-match context. Attempts Sofascore first; falls back to Matches.csv.
+    Fetch pre-match context. Attempts LiveScore API first; falls back to CSV.
     Never raises — always returns a dict (may contain empty lists / None values).
     """
     source    = "historical"
     home_data = {"form": [], "goals_avg": None, "conceded_avg": None}
     away_data = {"form": [], "goals_avg": None, "conceded_avg": None}
 
-    if use_live_data:
-        for team, store in [(home_team, "home"), (away_team, "away")]:
-            try:
-                t_id = _sofascore_team_id(team)
-                if t_id:
-                    data = _sofascore_form(t_id)
-                    if data["form"]:
-                        if store == "home": home_data = data
-                        else:              away_data = data
-                        source = "sofascore"
-            except Exception as exc:
-                logger.warning(f"Sofascore failed for {team}: {exc}")
+    if use_live_data and RAPIDAPI_KEY:
+        try:
+            # Step 1: resolve team IDs
+            home_id = _livescore_search_team(home_team)
+            away_id = _livescore_search_team(away_team)
 
+            if home_id or away_id:
+                # Step 2+3: get form via pregame endpoint
+                hd, ad = _livescore_form_via_pregame(
+                    home_id or "", away_id or "", n=5,
+                )
+                if hd["form"]:
+                    home_data = hd
+                    source = "livescore"
+                if ad["form"]:
+                    away_data = ad
+                    source = "livescore"
+
+        except Exception as exc:
+            logger.warning(f"LiveScore pipeline failed: {exc}")
+
+    elif use_live_data and not RAPIDAPI_KEY:
+        logger.warning("Live data requested but RAPIDAPI_KEY not set in .env")
+
+    # Fallback to historical CSV for any missing data
     if not home_data["form"]:
         home_data = _historical_form(home_team)
     if not away_data["form"]:
         away_data = _historical_form(away_team)
-    if home_data["form"] or away_data["form"]:
-        source = source if source == "sofascore" else "historical"
 
     h2h = _historical_h2h(home_team, away_team)
 
