@@ -32,10 +32,10 @@ calibrated XGBoost classifier and a live Elo rating system.
               └────────┬────────┘
                        │
                        ▼
-             ┌──────────────────┐
-             │  src/scraper.py  │  FBref last-5 form, goals,
-             │  (FBref or CSV)  │  H2H from Matches.csv
-             └────────┬─────────┘
+              ┌──────────────────┐
+              │  src/scraper.py  │  LiveScore API (RapidAPI) form,
+              │  (API or CSV)    │  H2H fallback from Matches.csv
+              └────────┬─────────┘
                       │
                       ▼
            ┌───────────────────────┐
@@ -115,7 +115,7 @@ streamlit run app.py
 | Module | Purpose |
 |--------|---------|
 | `train.py` | Trains calibrated XGBClassifier; exports `models/*.pkl` |
-| `src/scraper.py` | FBref form scraper + Matches.csv H2H fallback |
+| `src/scraper.py` | LiveScore RapidAPI form scraper + Matches.csv H2H fallback |
 | `src/rag_context.py` | Builds structured natural-language LLM context |
 | `src/llm_analyst.py` | Claude claude-sonnet-4-20250514 wrapper → structured JSON |
 | `src/predict.py` | End-to-end pipeline orchestrator |
@@ -158,7 +158,7 @@ Default: **60% XGB / 40% Elo** — adjustable via slider in dashboard.
 | ML Model | XGBoost + Scikit-learn |
 | Elo | Custom logistic formula with draw adjustment |
 | LLM | Anthropic Claude claude-sonnet-4-20250514 |
-| Scraping | Requests + BeautifulSoup4 |
+| Scraping | Requests (LiveScore RapidAPI) |
 | Dashboard | Streamlit + Plotly |
 | Tracking | MLflow (SQLite) |
 

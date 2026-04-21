@@ -198,29 +198,58 @@ def _livescore_search_team(team: str) -> Optional[str]:
 
         team_lower = team.lower()
 
+        # Handle common CSV names -> LiveScore names
+        aliases = {
+            "newcastle": "newcastle united",
+            "wolves": "wolverhampton wanderers",
+            "spurs": "tottenham hotspur",
+            "man united": "manchester united",
+            "man utd": "manchester united",
+            "man city": "manchester city",
+            "sheff utd": "sheffield united",
+            "nott'm forest": "nottingham forest",
+        }
+        search_target = aliases.get(team_lower, team_lower)
+
         # Pass 1: exact name match
         for t in teams_list:
-            if t.get("Nm", "").lower() == team_lower:
+            if t.get("Nm", "").lower() == search_target:
                 tid = str(t["ID"])
                 _team_id_cache[key] = tid
                 logger.info(f"LiveScore: '{team}' → ID={tid} (exact)")
                 return tid
 
-        # Pass 2: partial match, prefer major leagues
+        # Pass 2: partial match, prefer major leagues, ignore youth/women
         major = {"England", "Spain", "Germany", "Italy", "France"}
+        ignore = {" u21", " u19", " u18", " w", " women", " reserve", " youth"}
+        
         for t in teams_list:
             nm = t.get("Nm", "")
-            if team_lower in nm.lower() and t.get("CoNm") in major:
+            nm_lower = nm.lower()
+            
+            if any(x in nm_lower for x in ignore):
+                continue
+                
+            if search_target in nm_lower and t.get("CoNm") in major:
                 tid = str(t["ID"])
                 _team_id_cache[key] = tid
                 logger.info(f"LiveScore: '{team}' → ID={tid} (name='{nm}')")
                 return tid
 
-        # Pass 3: first result as fallback
+        # Pass 3: first result as fallback (also ignoring youth/women if possible)
+        for t in teams_list:
+            nm_lower = t.get("Nm", "").lower()
+            if not any(x in nm_lower for x in ignore):
+                tid = str(t["ID"])
+                _team_id_cache[key] = tid
+                logger.info(f"LiveScore: '{team}' → ID={tid} (fallback: '{t.get('Nm')}')")
+                return tid
+                
+        # If absolutely everything is youth/women (unlikely), just take the first
         first = teams_list[0]
         tid = str(first["ID"])
         _team_id_cache[key] = tid
-        logger.info(f"LiveScore: '{team}' → ID={tid} (fallback: '{first.get('Nm')}')")
+        logger.info(f"LiveScore: '{team}' → ID={tid} (desperate fallback: '{first.get('Nm')}')")
         return tid
 
     except Exception as exc:
