@@ -230,14 +230,9 @@ def main():
         idx_a   = (idx_h + 10) % len(teams)
         away_t  = st.selectbox("✈️ Away Team", teams, index=idx_a)
     m_date = date.today()
-
-    ac1, ac2 = st.columns(2)
-    with ac1:
-        rf_w = st.slider("XGB Model weight", 0.0, 1.0, 0.60, 0.05)
-    with ac2:
-        use_live_data = st.toggle("🌐 Try LiveScore API", value=False,
-                              help="Uses LiveScore RapidAPI for real-time form data. Falls back to historical CSV if unavailable.")
-    elo_w = round(1.0 - rf_w, 2)
+    rf_w   = 0.60
+    elo_w  = 0.40
+    use_live_data = True
     st.markdown("</div>", unsafe_allow_html=True)
 
     if home_t == away_t:
