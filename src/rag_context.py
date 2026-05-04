@@ -60,6 +60,8 @@ def build_rag_context(
     """
     home_form = _form_string(context.get("home_form", []))
     away_form = _form_string(context.get("away_form", []))
+    home_venue_form = _form_string(context.get("home_team_home_form", []))
+    away_venue_form = _form_string(context.get("away_team_away_form", []))
     hga       = _goals_str(context.get("home_goals_avg"))
     aga       = _goals_str(context.get("away_goals_avg"))
     hca       = _goals_str(context.get("home_conceded_avg"))
@@ -80,12 +82,14 @@ def build_rag_context(
     block = f"""=== PRE-MATCH INTELLIGENCE REPORT ===
 
 HOME TEAM: {home_team}
-  • Last 5 results (oldest → newest): {home_form}
+  • Last 5 results (overall): {home_form}
+  • Last 5 results (at home): {home_venue_form}
   • Avg goals scored  (last 5): {hga}
   • Avg goals conceded (last 5): {hca}
 
 AWAY TEAM: {away_team}
-  • Last 5 results (oldest → newest): {away_form}
+  • Last 5 results (overall): {away_form}
+  • Last 5 results (away): {away_venue_form}
   • Avg goals scored  (last 5): {aga}
   • Avg goals conceded (last 5): {aca}
 

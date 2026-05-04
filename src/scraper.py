@@ -117,13 +117,44 @@ def _historical_form(team: str, n: int = 5) -> dict:
 
     mask  = (df["HomeTeam"].str.lower() == team.lower()) | \
             (df["AwayTeam"].str.lower() == team.lower())
-    recent = df[mask].sort_values("MatchDate").tail(n)
+    recent = df[mask].sort_values("MatchDate", ascending=False).head(n)
     if recent.empty:
         return empty
 
     results, goals, conceded = [], [], []
     for _, row in recent.iterrows():
         is_home = row["HomeTeam"].lower() == team.lower()
+        results.append(_result_code(row["FTHome"], row["FTAway"],
+                                    "home" if is_home else "away"))
+        if is_home:
+            goals.append(row["FTHome"]); conceded.append(row["FTAway"])
+        else:
+            goals.append(row["FTAway"]); conceded.append(row["FTHome"])
+
+    return {
+        "form":          results,
+        "goals_avg":     round(sum(goals)    / len(goals),    2),
+        "conceded_avg":  round(sum(conceded) / len(conceded), 2),
+    }
+
+
+def _historical_venue_form(team: str, is_home: bool, n: int = 5) -> dict:
+    df = _load_matches()
+    empty = {"form": [], "goals_avg": None, "conceded_avg": None}
+    if df is None:
+        return empty
+
+    if is_home:
+        mask = (df["HomeTeam"].str.lower() == team.lower())
+    else:
+        mask = (df["AwayTeam"].str.lower() == team.lower())
+        
+    recent = df[mask].sort_values("MatchDate", ascending=False).head(n)
+    if recent.empty:
+        return empty
+
+    results, goals, conceded = [], [], []
+    for _, row in recent.iterrows():
         results.append(_result_code(row["FTHome"], row["FTAway"],
                                     "home" if is_home else "away"))
         if is_home:
@@ -339,20 +370,64 @@ def _parse_form_from_el(el_events: list, team_id: str, n: int = 5) -> dict:
     }
 
 
+def _parse_venue_form_from_el(el_events: list, team_id: str, is_home_venue: bool, n: int = 5) -> dict:
+    empty = {"form": [], "goals_avg": None, "conceded_avg": None}
+    results, goals_scored, goals_conceded = [], [], []
+
+    for evt in el_events:
+        # Get scores
+        try:
+            tr1 = int(evt.get("Tr1", -1))
+            tr2 = int(evt.get("Tr2", -1))
+        except (ValueError, TypeError):
+            continue
+        if tr1 < 0 or tr2 < 0:
+            continue
+
+        # Only count finished matches
+        eps = evt.get("Eps", "")
+        if isinstance(eps, str) and eps not in ("FT", "AET", "AP"):
+            continue
+
+        # Determine if our team is T1 (home) or T2 (away)
+        t1_list = evt.get("T1", [])
+        t1_id = str(t1_list[0].get("ID", "")) if isinstance(t1_list, list) and t1_list else ""
+        is_home = (t1_id == team_id)
+
+        # Filter by venue
+        if is_home != is_home_venue:
+            continue
+
+        perspective = "home" if is_home else "away"
+        results.append(_result_code(tr1, tr2, perspective))
+
+        gf = tr1 if is_home else tr2
+        ga = tr2 if is_home else tr1
+        goals_scored.append(gf)
+        goals_conceded.append(ga)
+
+        if len(results) >= n:
+            break
+
+    if not results:
+        return empty
+
+    return {
+        "form":         results,
+        "goals_avg":    round(sum(goals_scored)   / len(goals_scored),   2),
+        "conceded_avg": round(sum(goals_conceded) / len(goals_conceded), 2),
+    }
+
+
 def _livescore_form_via_pregame(
     home_team_id: str,
     away_team_id: str,
     n: int = 5,
-) -> tuple[dict, dict]:
+) -> tuple[dict, dict, dict, dict]:
     """
     Try to get form for both teams using matches/v2/get-pregame-form.
 
-    Steps:
-      1. Find a recent match involving either team (via list-by-date)
-      2. Call get-pregame-form with that match Eid
-      3. Parse T1[0].EL and T2[0].EL for form data
-
-    Returns (home_form_dict, away_form_dict).
+    Returns (home_data, away_data, home_venue_data, away_venue_data).
     """
     empty = {"form": [], "goals_avg": None, "conceded_avg": None}
 
@@ -362,7 +437,7 @@ def _livescore_form_via_pregame(
         match_eid = _find_match_eid_for_team(away_team_id, days_back=4)
     if not match_eid:
         logger.warning("LiveScore: no recent match found for either team")
-        return empty, empty
+        return empty, empty, empty, empty
 
     # Step 2: get pregame form
     data = _api_get("matches/v2/get-pregame-form", {
@@ -374,6 +449,7 @@ def _livescore_form_via_pregame(
 
     # Step 3: parse T1 and T2 form data
     home_data, away_data = empty.copy(), empty.copy()
+    home_venue_data, away_venue_data = empty.copy(), empty.copy()
 
     for side_key in ("T1", "T2"):
         side_list = data.get(side_key, [])
@@ -391,35 +467,38 @@ def _livescore_form_via_pregame(
 
         if tid == home_team_id:
             home_data = form_data
+            home_venue_data = _parse_venue_form_from_el(el_events, tid, True, n)
         elif tid == away_team_id:
             away_data = form_data
+            away_venue_data = _parse_venue_form_from_el(el_events, tid, False, n)
 
     # If we only found form for one team (the other wasn't in this match),
     # try finding a separate match for the missing team
     if not home_data["form"] and home_team_id:
-        home_data = _fallback_form_via_dates(home_team_id, n)
+        home_data, home_venue_data = _fallback_form_via_dates(home_team_id, True, n)
     if not away_data["form"] and away_team_id:
-        away_data = _fallback_form_via_dates(away_team_id, n)
+        away_data, away_venue_data = _fallback_form_via_dates(away_team_id, False, n)
 
-    return home_data, away_data
+    return home_data, away_data, home_venue_data, away_venue_data
 
 
-def _fallback_form_via_dates(team_id: str, n: int = 5) -> dict:
+def _fallback_form_via_dates(team_id: str, is_home_venue: bool, n: int = 5) -> tuple[dict, dict]:
     """
     Fallback: find a match for this specific team and use get-pregame-form.
+    Returns (overall_form, venue_form).
     """
     empty = {"form": [], "goals_avg": None, "conceded_avg": None}
 
     match_eid = _find_match_eid_for_team(team_id, days_back=7)
     if not match_eid:
-        return empty
+        return empty, empty
 
     data = _api_get("matches/v2/get-pregame-form", {
         "Category": "soccer",
         "Eid": match_eid,
     })
     if not data or not isinstance(data, dict):
-        return empty
+        return empty, empty
 
     for side_key in ("T1", "T2"):
         side_list = data.get(side_key, [])
@@ -430,9 +509,9 @@ def _fallback_form_via_dates(team_id: str, n: int = 5) -> dict:
         if tid == team_id:
             el_events = team_obj.get("EL", [])
             if el_events:
-                return _parse_form_from_el(el_events, tid, n)
+                return _parse_form_from_el(el_events, tid, n), _parse_venue_form_from_el(el_events, tid, is_home_venue, n)
 
-    return empty
+    return empty, empty
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -452,6 +531,9 @@ def scrape_prematch_context(
     home_data = {"form": [], "goals_avg": None, "conceded_avg": None}
     away_data = {"form": [], "goals_avg": None, "conceded_avg": None}
 
+    home_venue_form = []
+    away_venue_form = []
+
     if use_live_data and RAPIDAPI_KEY:
         try:
             # Step 1: resolve team IDs
@@ -460,14 +542,16 @@ def scrape_prematch_context(
 
             if home_id or away_id:
                 # Step 2+3: get form via pregame endpoint
-                hd, ad = _livescore_form_via_pregame(
+                hd, ad, hvd, avd = _livescore_form_via_pregame(
                     home_id or "", away_id or "", n=5,
                 )
                 if hd["form"]:
                     home_data = hd
+                    home_venue_form = hvd.get("form", [])
                     source = "livescore"
                 if ad["form"]:
                     away_data = ad
+                    away_venue_form = avd.get("form", [])
                     source = "livescore"
 
         except Exception as exc:
@@ -483,10 +567,14 @@ def scrape_prematch_context(
         away_data = _historical_form(away_team)
 
     h2h = _historical_h2h(home_team, away_team)
+    
+    # We no longer pad from historical data as it is highly expired.
 
     return {
         "home_form":         home_data["form"],
         "away_form":         away_data["form"],
+        "home_team_home_form": home_venue_form,
+        "away_team_away_form": away_venue_form,
         "h2h_record":        h2h,
         "home_goals_avg":    home_data["goals_avg"],
         "away_goals_avg":    away_data["goals_avg"],

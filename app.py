@@ -333,12 +333,20 @@ def main():
           <div class='card-title'>📋 Pre-Match Context {src_badge(ctx.get('source','historical'))}</div>
           <table style='width:100%;border-collapse:collapse;'>
             <tr>
-              <td style='padding:0.5rem 0;color:#718096;font-size:0.78rem;width:40%;'>🏠 {home_t} form</td>
+              <td style='padding:0.5rem 0;color:#718096;font-size:0.78rem;width:40%;'>🏠 {home_t} form (overall)</td>
               <td>{form_html(ctx.get('home_form',[]))}</td>
             </tr>
             <tr>
-              <td style='padding:0.5rem 0;color:#718096;font-size:0.78rem;'>✈️ {away_t} form</td>
+              <td style='padding:0.5rem 0;color:#718096;font-size:0.78rem;width:40%;'>🏠 {home_t} form (home)</td>
+              <td>{form_html(ctx.get('home_team_home_form',[]))}</td>
+            </tr>
+            <tr>
+              <td style='padding:0.5rem 0;color:#718096;font-size:0.78rem;'>✈️ {away_t} form (overall)</td>
               <td>{form_html(ctx.get('away_form',[]))}</td>
+            </tr>
+            <tr>
+              <td style='padding:0.5rem 0;color:#718096;font-size:0.78rem;'>✈️ {away_t} form (away)</td>
+              <td>{form_html(ctx.get('away_team_away_form',[]))}</td>
             </tr>
             <tr>
               <td style='padding:0.5rem 0;color:#718096;font-size:0.78rem;'>Avg goals (home)</td>

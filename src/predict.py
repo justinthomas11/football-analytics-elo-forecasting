@@ -170,10 +170,17 @@ def run_prediction(
     context = scrape_prematch_context(home_team, away_team, use_live_data=use_live_data)
 
     # Step 3 — Build feature row
+    # The user specifically requested that win probabilities take home and away form into account
+    home_venue_form = context.get("home_team_home_form", [])
+    if not home_venue_form: home_venue_form = context.get("home_form", [])
+    
+    away_venue_form = context.get("away_team_away_form", [])
+    if not away_venue_form: away_venue_form = context.get("away_form", [])
+
     feat_row = _build_row(
         home_elo=home_elo, away_elo=away_elo,
-        home_form=_form_pts(context.get("home_form", [])),
-        away_form=_form_pts(context.get("away_form", [])),
+        home_form=_form_pts(home_venue_form),
+        away_form=_form_pts(away_venue_form),
     )
 
     # Step 4 — XGB probabilities
