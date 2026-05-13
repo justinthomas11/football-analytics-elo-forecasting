@@ -21,6 +21,6 @@ Thumbs.db
 mlruns/
 *.db
 
-# FootballIQ — trained model artefacts (large pickle files)
-models/*.pkl
+# FootballIQ — model artefacts are committed for Streamlit Cloud deployment
+# models/*.pkl
 
