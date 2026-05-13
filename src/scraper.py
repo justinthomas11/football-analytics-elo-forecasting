@@ -567,8 +567,6 @@ def scrape_prematch_context(
         away_data = _historical_form(away_team)
 
     h2h = _historical_h2h(home_team, away_team)
-    
-    # We no longer pad from historical data as it is highly expired.
 
     return {
         "home_form":         home_data["form"],
